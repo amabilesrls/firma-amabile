@@ -7,12 +7,12 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     *{box-sizing:border-box}
-    body{margin:0;font-family:Arial,sans-serif;background:#f5f5f5;color:#111}
-    .wrap{max-width:760px;margin:auto;padding:16px}
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:none;touch-action:none;font-family:Arial,sans-serif;background:#f5f5f5;color:#111} body{position:fixed;inset:0}
+    .wrap{max-width:760px;height:100%;margin:auto;padding:12px 16px;overflow:hidden;display:flex;flex-direction:column}
     h1{font-size:20px;text-align:center;margin:4px 0 5px}
     .sub{text-align:center;font-size:13px;color:#555;margin-bottom:14px}
     .card{background:white;border:1px solid #ddd;border-radius:14px;padding:12px}
-    canvas{width:100%;height:280px;border:2px solid #222;border-radius:10px;background:#fff;touch-action:none;display:block}
+    canvas{width:100%;height:min(42vh,280px);border:2px solid #222;border-radius:10px;background:#fff;touch-action:none;overscroll-behavior:none;display:block;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
     .hint{text-align:center;font-size:12px;color:#666;margin-top:7px}
     .buttons{display:grid;grid-template-columns:1fr 2fr;gap:10px;margin-top:12px}
     button{border:0;border-radius:10px;padding:14px;font-size:16px;font-weight:700}
@@ -39,9 +39,14 @@
 const tg = window.Telegram.WebApp;
 tg.ready();
 tg.expand();
+try { tg.disableVerticalSwipes(); } catch(e) {}
+document.documentElement.style.overflow='hidden';
+document.body.style.overflow='hidden';
 
 const canvas = document.getElementById('pad');
 const ctx = canvas.getContext('2d');
+canvas.addEventListener('touchmove', e=>e.preventDefault(), {passive:false});
+canvas.addEventListener('touchstart', e=>e.preventDefault(), {passive:false});
 let strokes = [];
 let current = null;
 let drawing = false;
@@ -93,38 +98,16 @@ document.getElementById('clear').onclick=()=>{
 };
 
 document.getElementById('send').onclick=()=>{
-  if(!strokes.some(s=>s.length>1)){
-    document.getElementById('status').textContent='Firma prima di confermare.';
-    return;
-  }
-
+  const status=document.getElementById('status');
+  if(!strokes.some(s=>s.length>1)){status.textContent='Firma prima di confermare.';return;}
   const r=canvas.getBoundingClientRect();
-
-  // Riduce ulteriormente i punti se la firma è molto complessa.
-  let reduced = strokes.map(s => {
-    if(s.length <= 35) return s;
-    const step = Math.ceil(s.length / 35);
-    const a = s.filter((_,i)=> i%step===0);
-    if(a[a.length-1] !== s[s.length-1]) a.push(s[s.length-1]);
-    return a;
-  });
-
-  const payload={
-    type:'signature',
-    w:Math.round(r.width),
-    h:Math.round(r.height),
-    strokes:reduced
-  };
-  const data=JSON.stringify(payload);
-
-  if(data.length > 3900){
-    // ultima compressione per rispettare il limite sendData di Telegram
-    reduced = reduced.map(s => s.filter((_,i)=>i%2===0));
-    payload.strokes = reduced;
-  }
-
-  tg.sendData(JSON.stringify(payload));
-  tg.close();
+  let reduced=strokes.map(s=>{if(s.length<=22)return s;const step=Math.ceil(s.length/22);const a=s.filter((_,i)=>i%step===0);if(a.length&&a[a.length-1]!==s[s.length-1])a.push(s[s.length-1]);return a;});
+  const payload={type:'signature',w:Math.round(r.width),h:Math.round(r.height),strokes:reduced};
+  let data=JSON.stringify(payload),guard=0;
+  while(data.length>3500&&guard<6){reduced=reduced.map(s=>s.length<=4?s:s.filter((_,i)=>i===0||i===s.length-1||i%2===0));payload.strokes=reduced;data=JSON.stringify(payload);guard++;}
+  if(data.length>3900){status.textContent='Firma troppo complessa. Premi Cancella e riprova.';return;}
+  status.style.color='#087a3c';status.textContent='Invio firma in corso…';
+  try{tg.sendData(data);setTimeout(()=>tg.close(),250);}catch(err){status.style.color='#b00020';status.textContent='Invio non riuscito. Riprova.';}
 };
 window.addEventListener('resize', resize);
 setTimeout(resize,50);
