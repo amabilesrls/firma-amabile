@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>Firma cliente - Amabile SRLS</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Arial,sans-serif;background:#f5f5f5;color:#111}
+    .wrap{max-width:760px;margin:auto;padding:16px}
+    h1{font-size:20px;text-align:center;margin:4px 0 5px}
+    .sub{text-align:center;font-size:13px;color:#555;margin-bottom:14px}
+    .card{background:white;border:1px solid #ddd;border-radius:14px;padding:12px}
+    canvas{width:100%;height:280px;border:2px solid #222;border-radius:10px;background:#fff;touch-action:none;display:block}
+    .hint{text-align:center;font-size:12px;color:#666;margin-top:7px}
+    .buttons{display:grid;grid-template-columns:1fr 2fr;gap:10px;margin-top:12px}
+    button{border:0;border-radius:10px;padding:14px;font-size:16px;font-weight:700}
+    #clear{background:#e9e9e9}
+    #send{background:#149b50;color:white}
+    #status{text-align:center;min-height:20px;margin-top:10px;font-size:13px;color:#b00020}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Firma cliente</h1>
+  <div class="sub">Firma con il dito all'interno del riquadro</div>
+  <div class="card">
+    <canvas id="pad"></canvas>
+    <div class="hint">La firma verrà inserita nel rapportino sotto “TIMBRO E FIRMA”.</div>
+    <div class="buttons">
+      <button id="clear" type="button">Cancella</button>
+      <button id="send" type="button">Conferma firma</button>
+    </div>
+    <div id="status"></div>
+  </div>
+</div>
+<script>
+const tg = window.Telegram.WebApp;
+tg.ready();
+tg.expand();
+
+const canvas = document.getElementById('pad');
+const ctx = canvas.getContext('2d');
+let strokes = [];
+let current = null;
+let drawing = false;
+
+function resize(){
+  const rect = canvas.getBoundingClientRect();
+  const ratio = Math.max(window.devicePixelRatio || 1, 1);
+  canvas.width = Math.round(rect.width * ratio);
+  canvas.height = Math.round(rect.height * ratio);
+  ctx.setTransform(ratio,0,0,ratio,0,0);
+  redraw();
+}
+function redraw(){
+  const rect = canvas.getBoundingClientRect();
+  ctx.clearRect(0,0,rect.width,rect.height);
+  ctx.strokeStyle='#000';
+  ctx.lineWidth=2.4;
+  ctx.lineCap='round';
+  ctx.lineJoin='round';
+  for(const s of strokes){
+    if(s.length<2) continue;
+    ctx.beginPath();
+    ctx.moveTo(s[0][0],s[0][1]);
+    for(let i=1;i<s.length;i++) ctx.lineTo(s[i][0],s[i][1]);
+    ctx.stroke();
+  }
+}
+function pos(e){
+  const r=canvas.getBoundingClientRect();
+  return [Math.round((e.clientX-r.left)*10)/10, Math.round((e.clientY-r.top)*10)/10];
+}
+canvas.addEventListener('pointerdown', e=>{
+  drawing=true; current=[pos(e)]; strokes.push(current); canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e=>{
+  if(!drawing) return;
+  const p=pos(e), last=current[current.length-1];
+  // decimazione: mantiene il payload piccolo per Telegram sendData
+  const dx=p[0]-last[0], dy=p[1]-last[1];
+  if(dx*dx+dy*dy < 9) return;
+  current.push(p); redraw();
+});
+function stop(){drawing=false; current=null;}
+canvas.addEventListener('pointerup', stop);
+canvas.addEventListener('pointercancel', stop);
+
+document.getElementById('clear').onclick=()=>{
+  strokes=[]; redraw(); document.getElementById('status').textContent='';
+};
+
+document.getElementById('send').onclick=()=>{
+  if(!strokes.some(s=>s.length>1)){
+    document.getElementById('status').textContent='Firma prima di confermare.';
+    return;
+  }
+
+  const r=canvas.getBoundingClientRect();
+
+  // Riduce ulteriormente i punti se la firma è molto complessa.
+  let reduced = strokes.map(s => {
+    if(s.length <= 35) return s;
+    const step = Math.ceil(s.length / 35);
+    const a = s.filter((_,i)=> i%step===0);
+    if(a[a.length-1] !== s[s.length-1]) a.push(s[s.length-1]);
+    return a;
+  });
+
+  const payload={
+    type:'signature',
+    w:Math.round(r.width),
+    h:Math.round(r.height),
+    strokes:reduced
+  };
+  const data=JSON.stringify(payload);
+
+  if(data.length > 3900){
+    // ultima compressione per rispettare il limite sendData di Telegram
+    reduced = reduced.map(s => s.filter((_,i)=>i%2===0));
+    payload.strokes = reduced;
+  }
+
+  tg.sendData(JSON.stringify(payload));
+  tg.close();
+};
+window.addEventListener('resize', resize);
+setTimeout(resize,50);
+</script>
+</body>
+</html>
